@@ -1,8 +1,5 @@
-import { NodeAPI } from 'node-red'
-import HAPHostConfigType from './types/HAPHostConfigType'
-import HAPHostNodeType from './types/HAPHostNodeType'
-import HostType from './types/HostType'
-import semver from 'semver/preload'
+import { logger } from '@nrchkb/logger'
+import { MulticastOptions } from 'bonjour-hap'
 import {
     Accessory,
     Bridge,
@@ -12,11 +9,15 @@ import {
     Service,
     uuid,
 } from 'hap-nodejs'
-import HapCategories from './types/HapCategories'
+import { NodeAPI } from 'node-red'
 import { SemVer } from 'semver'
-import { logger } from '@nrchkb/logger'
-import { MulticastOptions } from 'bonjour-hap'
+import semver from 'semver/preload'
+
 import NRCHKBError from './NRCHKBError'
+import HapCategories from './types/HapCategories'
+import HAPHostConfigType from './types/HAPHostConfigType'
+import HAPHostNodeType from './types/HAPHostNodeType'
+import HostType from './types/HostType'
 
 module.exports = (RED: NodeAPI, hostType: HostType) => {
     const MdnsUtils = require('./utils/MdnsUtils')()
@@ -120,6 +121,14 @@ module.exports = (RED: NodeAPI, hostType: HostType) => {
                 return false
             }
 
+            // As HAP-Nodejs cannot understand new pin code format yet, we need to adjust new to old one
+            let oldPinCode = self.config.pinCode
+
+            if ((oldPinCode.match(/-/g) || []).length == 1) {
+                oldPinCode = oldPinCode.replace(/-/g, '')
+                oldPinCode = `${oldPinCode.slice(0, 3)}-${oldPinCode.slice(3, 5)}-${oldPinCode.slice(5, 8)}`
+            }
+
             self.host.publish(
                 {
                     username: self.bridgeUsername,
@@ -127,7 +136,7 @@ module.exports = (RED: NodeAPI, hostType: HostType) => {
                         self.config.port && !isNaN(self.config.port)
                             ? self.config.port
                             : 0,
-                    pincode: self.config.pinCode,
+                    pincode: oldPinCode,
                     category: self.accessoryCategory,
                     mdns: self.mdnsConfig,
                     advertiser:
@@ -141,15 +150,16 @@ module.exports = (RED: NodeAPI, hostType: HostType) => {
             return true
         }
 
-        self.on('close', function (removed: any, done: () => any) {
+        self.on('close', async function (removed: any, done: () => any) {
             if (removed) {
-                // This node has been deleted
-                self.host.destroy()
+                log.debug('This node has been deleted')
+                await self.host.destroy()
             } else {
-                // This node is being restarted
-                self.host.unpublish()
-                self.published = false
+                log.debug('This node is being restarted')
+                await self.host.unpublish()
             }
+
+            self.published = false
 
             done()
         })
